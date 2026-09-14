@@ -30,7 +30,11 @@ DATA_PATH = "Flight_Load_Factor_Data.csv"
 # ----------------------------------------------------------------------------
 @st.cache_data
 def load_data(path: str) -> pd.DataFrame:
-    df = pd.read_csv(path, parse_dates=["MonthDate"])
+    df = pd.read_csv(path)
+
+    # Build MonthDate correctly from the YYYY-MM column
+    df["MonthDate"] = pd.to_datetime(df["Month"].astype(str) + "-01")
+
     df["Route"] = df["Route"].astype(str)
     df["Is_Total_Row"] = df["Route"].str.startswith("TOTAL")
 
