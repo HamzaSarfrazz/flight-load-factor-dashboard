@@ -408,6 +408,152 @@ else:
 st.divider()
 
 # ----------------------------------------------------------------------------
+# Month-by-Month Comparison (pick years, then routes, then calendar months)
+# ----------------------------------------------------------------------------
+st.subheader("Month-by-Month Comparison")
+st.caption(
+    "Pick one or more years and routes, then choose which calendar months to "
+    "compare — e.g. Jan/Feb/Mar across 2024, 2025 and 2026, colored by year."
+)
+
+# Calendar month name + number, independent of year, so the same month can be
+# lined up across different years.
+routes_only_mc = routes_only.copy()
+routes_only_mc["Month_Name"] = routes_only_mc["MonthDate"].dt.strftime("%b")
+routes_only_mc["Month_Num"] = routes_only_mc["MonthDate"].dt.month
+routes_only_mc["Year"] = routes_only_mc["Year"].astype(int)
+
+mc_col1, mc_col2 = st.columns(2)
+
+with mc_col1:
+    mc_years = st.multiselect(
+        "Year(s)",
+        years,
+        default=years[-2:] if len(years) >= 2 else years,
+        key="mc_years",
+    )
+
+route_options_mc = sorted(
+    routes_only_mc.loc[routes_only_mc["Year"].isin(mc_years), "Route_Name"].unique()
+)
+
+with mc_col2:
+    mc_routes = st.multiselect(
+        "Route(s)",
+        route_options_mc,
+        default=route_options_mc[:1] if route_options_mc else [],
+        key="mc_routes",
+    )
+
+if mc_years and mc_routes:
+    route_year_data = routes_only_mc[
+        routes_only_mc["Year"].isin(mc_years) & routes_only_mc["Route_Name"].isin(mc_routes)
+    ]
+
+    # A Route_Name can map to more than one Route_Code (e.g. different flight
+    # numbers on the same city pair) — collapse those into one row per
+    # Route_Name + Year + Month so totals aren't split across duplicate rows.
+    route_year_data = (
+        route_year_data.groupby(["Route_Name", "Year", "Month_Name", "Month_Num"])
+        .agg(
+            Flights=("Flights", "sum"),
+            Seat_Capacity=("Seat_Capacity", "sum"),
+            Seats_Occupied=("Seats_Occupied", "sum"),
+        )
+        .reset_index()
+        .sort_values(["Month_Num", "Year"])
+    )
+    route_year_data["Load_Factor"] = (
+        route_year_data["Seats_Occupied"] / route_year_data["Seat_Capacity"]
+    )
+    route_year_data["Year_Label"] = route_year_data["Year"].astype(str)
+
+    month_order = (
+        route_year_data[["Month_Num", "Month_Name"]]
+        .drop_duplicates()
+        .sort_values("Month_Num")["Month_Name"]
+        .tolist()
+    )
+
+    mc_months = st.multiselect(
+        "Calendar months to compare",
+        month_order,
+        default=month_order,
+        key="mc_months",
+    )
+
+    mc_data = route_year_data[route_year_data["Month_Name"].isin(mc_months)]
+
+    if len(mc_data) == 0:
+        st.info("Choose at least one month to compare.")
+    else:
+        mc_col_a, mc_col_b = st.columns([3, 2])
+
+        with mc_col_a:
+            fig_mc = px.bar(
+                mc_data,
+                x="Month_Name",
+                y="Load_Factor",
+                color="Year_Label",
+                facet_col="Route_Name" if len(mc_routes) > 1 else None,
+                barmode="group",
+                category_orders={"Month_Name": month_order},
+                text=mc_data["Load_Factor"].map(lambda v: f"{v:.1%}"),
+                labels={
+                    "Load_Factor": "Load Factor",
+                    "Month_Name": "Month",
+                    "Year_Label": "Year",
+                },
+                title=(
+                    f"{mc_routes[0]} load factor by month"
+                    if len(mc_routes) == 1
+                    else "Load factor by month"
+                ),
+            )
+            fig_mc.update_yaxes(tickformat=".0%")
+            fig_mc.update_traces(textposition="outside")
+            st.plotly_chart(fig_mc, use_container_width=True)
+
+        with mc_col_b:
+            display_mc = mc_data.copy()
+            display_mc["Load_Factor"] = (
+                (display_mc["Load_Factor"] * 100).round(1).astype(str) + "%"
+            )
+            st.dataframe(
+                display_mc[
+                    [
+                        "Route_Name",
+                        "Year",
+                        "Month_Name",
+                        "Flights",
+                        "Seat_Capacity",
+                        "Seats_Occupied",
+                        "Load_Factor",
+                    ]
+                ].rename(columns={"Route_Name": "Route", "Month_Name": "Month"}),
+                hide_index=True,
+                use_container_width=True,
+            )
+
+        if len(mc_data) >= 2:
+            best_row = mc_data.loc[mc_data["Load_Factor"].idxmax()]
+            worst_row = mc_data.loc[mc_data["Load_Factor"].idxmin()]
+            spread = (best_row["Load_Factor"] - worst_row["Load_Factor"]) * 100
+            st.info(
+                f"**{best_row['Route_Name']} \u2014 {best_row['Month_Name']} "
+                f"{best_row['Year']}** had the highest load factor "
+                f"({best_row['Load_Factor']*100:.1f}%), while "
+                f"**{worst_row['Route_Name']} \u2014 {worst_row['Month_Name']} "
+                f"{worst_row['Year']}** had the lowest "
+                f"({worst_row['Load_Factor']*100:.1f}%) \u2014 a spread of "
+                f"**{spread:.1f} points**."
+            )
+else:
+    st.info("Select at least one year and one route to compare.")
+
+st.divider()
+
+# ----------------------------------------------------------------------------
 # Route-level breakdown
 # ----------------------------------------------------------------------------
 st.subheader("Route-level load factor")
